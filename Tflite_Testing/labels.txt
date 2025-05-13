@@ -1,8 +1,0 @@
-0 circle
-1 triangle
-2 rectangle
-3 hexagon
-4 pacman
-5 pentagon
-6 arrow circle
-7 arrow rectangle
