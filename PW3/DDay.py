@@ -1,11 +1,13 @@
 import cv2
 import numpy as np
-from picamera2 import Picamera2                                                 # type: ignore
-import RPi.GPIO as GPIO                                         # type: ignore
+import time
+from picamera2 import Picamera2
+import RPi.GPIO as GPIO
 from time import sleep
+import sys
+import math
 import os
-
-
+ 
 enA = 2
 enB = 22
 in1 = 3
@@ -14,7 +16,7 @@ in3 = 17
 in4 = 27
 rotR= 5
 rotL= 6
-
+ 
 #setup 
 GPIO.setmode(GPIO.BCM)
  
@@ -49,7 +51,7 @@ eqDistL = 0
 eqDistR = 0
 wheelCircumference = 2 * 3 * 3; # Circumference (radius = 3 cm)
 current_direction = "stop"  # Default
-
+ 
 # Initialize Pi Camera
 camera = Picamera2()
 camera.preview_configuration.main.size = (320, 240)
@@ -57,8 +59,6 @@ camera.preview_configuration.main.format = "RGB888"
 camera.preview_configuration.controls.FrameRate = 60
 camera.configure("preview")
 camera.start()
-
-
 # For line following
 ROI_Y_START = 120
 ROI_Y_END = 240
@@ -74,9 +74,8 @@ for filename in os.listdir(symbols_path):
         img_path = os.path.join(symbols_path, filename)
         img = cv2.imread(img_path, 0)
         symbols[filename] = img
-
-        gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        blur_img = cv2.GaussianBlur(gray_img, (5, 5), 1.1)
+ 
+        blur_img = cv2.GaussianBlur(img, (5, 5), 1.1)
         _, otsu_thresh = cv2.threshold(blur_img, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
  
         processed_symbols[filename] = otsu_thresh  # Store processed image
@@ -90,8 +89,8 @@ for filename in os.listdir(symbols_path):
 def forward():
     global current_direction
     current_direction = "forward"
-    RIGHT.ChangeDutyCycle(30)
-    LEFT.ChangeDutyCycle(30)
+    RIGHT.ChangeDutyCycle(27)
+    LEFT.ChangeDutyCycle(27)
     GPIO.output(in1, GPIO.LOW)
     GPIO.output(in2, GPIO.HIGH)
     GPIO.output(in3, GPIO.HIGH)
@@ -121,7 +120,7 @@ def rightback():
     global current_direction
     current_direction = "rightback"
     RIGHT.ChangeDutyCycle(25)
-    LEFT.ChangeDutyCycle(75)
+    LEFT.ChangeDutyCycle(70)
     GPIO.output(in1, GPIO.HIGH)
     GPIO.output(in2, GPIO.LOW)
     GPIO.output(in3, GPIO.LOW)
@@ -130,8 +129,8 @@ def rightback():
 def right90():
     global current_direction
     current_direction = "right90"
-    RIGHT.ChangeDutyCycle(75)
-    LEFT.ChangeDutyCycle(75)
+    RIGHT.ChangeDutyCycle(65)
+    LEFT.ChangeDutyCycle(65)
     GPIO.output(in1, GPIO.HIGH)
     GPIO.output(in2, GPIO.LOW)
     GPIO.output(in3, GPIO.HIGH)
@@ -152,16 +151,17 @@ def leftback():
     current_direction = "leftback"
     RIGHT.ChangeDutyCycle(55)
     LEFT.ChangeDutyCycle(27)
-    GPIO.output(in1, GPIO.LOW)
-    GPIO.output(in2, GPIO.HIGH)
-    GPIO.output(in3, GPIO.HIGH)
-    GPIO.output(in4, GPIO.LOW)
+    GPIO.output(in1, GPIO.HIGH)
+    GPIO.output(in2, GPIO.LOW)
+    GPIO.output(in3, GPIO.LOW)
+    GPIO.output(in4, GPIO.HIGH)
+ 
  
 def left90():
     global current_direction
     current_direction = "left90"
-    RIGHT.ChangeDutyCycle(80)
-    LEFT.ChangeDutyCycle(80)
+    RIGHT.ChangeDutyCycle(70)
+    LEFT.ChangeDutyCycle(70)
     GPIO.output(in1, GPIO.LOW)
     GPIO.output(in2, GPIO.HIGH)
     GPIO.output(in3, GPIO.LOW)
@@ -186,6 +186,44 @@ def stop():
     GPIO.output(in2, GPIO.LOW)
     GPIO.output(in3, GPIO.LOW)
     GPIO.output(in4, GPIO.LOW)
+ 
+def detect_shape(contour):
+    approx = cv2.approxPolyDP(contour, 0.02 * cv2.arcLength(contour, True), True)
+    num_vertices = len(approx)
+ 
+    if num_vertices == 3:
+        return "Triangle"
+    elif num_vertices == 4:
+        return "Rectangle"
+    elif num_vertices == 5:
+        return "Pentagon"
+    elif num_vertices == 6:
+        return "Hexagon"
+    elif num_vertices > 6:
+        x, y, w, h = cv2.boundingRect(contour)
+        aspect_ratio = w / float(h)
+        circularity = (4 * math.pi * cv2.contourArea(contour)) / (cv2.arcLength(contour, True) ** 2)
+ 
+        defects = None  # <-- initialize first
+ 
+        hull = cv2.convexHull(contour, returnPoints=False)
+        if len(contour) >= 3 and hull is not None and len(hull) >= 3:
+            try:
+                defects = cv2.convexityDefects(contour, hull)
+            except cv2.error as e:
+                print("ConvexityDefects error:", e)
+ 
+        if defects is not None and len(defects) > 0:
+            for i in range(defects.shape[0]):
+                _, _, _, depth = defects[i, 0]
+                if depth > 10:
+                    return None
+        elif circularity >0.7:
+            return "Circle"
+ 
+        return None
+ 
+    return None
  
 # Initialize ORB detector with more features for better accuracy
 orb = cv2.ORB_create(nfeatures=500)  # Increased number of features
@@ -219,7 +257,6 @@ def movement(frame, line_contour):
                     rightback
                     left90()
                 elif 150 < cx < 170:
-                    right90()
                     backward()
                 else:
                     print("90 Right")
@@ -243,29 +280,31 @@ def process_frame():
  
  
     # Define HSV color ranges (tweak as needed)
-    lower_red = np.array([170, 100, 100])
-    upper_red = np.array([185, 255, 255])
+    lower_red1 = np.array([170, 100, 100])
+    upper_red1 = np.array([185, 255, 255])
     lower_green = np.array([75, 100, 100])
     upper_green = np.array([85, 255, 255])
-    lower_blue = np.array([100, 180, 50])
-    upper_blue = np.array([115, 255, 150])
+    lower_blue = np.array([100, 100, 50])
+    upper_blue = np.array([115, 255, 255])
     lower_yellow = np.array([20, 100, 100])
     upper_yellow = np.array([30, 255, 255])
-
+ 
     # Create color masks
-    mask_red = cv2.inRange(hsv, lower_red, upper_red) 
+    mask_red = cv2.inRange(hsv, lower_red1, upper_red1) 
     mask_green = cv2.inRange(hsv, lower_green, upper_green)
     mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
     mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow)
  
+    # Combine all color masks
+    mask_color = mask_red | mask_green | mask_blue | mask_yellow
  
-    # Determine which color is detected 
+    # Determine which color is detected (priority: red > green > blue > yellow)
     if cv2.countNonZero(mask_red) > 500:
         color_detected = "Red"
         final_mask = mask_red
     elif cv2.countNonZero(mask_green) > 500:
         color_detected = "Green"
-        final_mask = None
+        final_mask = mask_green
     elif cv2.countNonZero(mask_blue) > 500:
         color_detected = "Blue"
         final_mask = mask_blue
@@ -276,24 +315,21 @@ def process_frame():
         final_mask = None
  
     if final_mask is not None:
-        if color_detected == "Blue" or color_detected == "Green":
-            print("Unwanted Colour Line -IGONORED")
-
-            gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-            _, thresh = cv2.threshold(gray, 130, 180, cv2.THRESH_BINARY_INV)
-            mask_to_use = thresh 
-        else:
-            mask_to_use = final_mask
+        print(f"{color_detected} color detected - following {color_detected} line")
+        color_area = cv2.bitwise_and(frame, frame, mask=final_mask)
+        gray_color = cv2.cvtColor(color_area, cv2.COLOR_RGB2GRAY)
+        _, thresh = cv2.threshold(gray_color, 100, 255, cv2.THRESH_BINARY)
+        mask_to_use = final_mask
     else:
         print("No color detected - following black line")
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY_INV)
         mask_to_use = thresh
  
+ 
     # Find contours on the chosen mask
-    contours, _ = cv2.findContours(mask_to_use, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(mask_to_use, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
-    line_contour = contours[0]
  
  
     if len(contours) >= 2:
@@ -303,12 +339,18 @@ def process_frame():
  
         # Line following logic (based on largest contour)
         movement(frame, line_contour)
-        symbol_frame(frame) 
-
-        if len(contours) ==2:
-            shape_name = detect_shape(shape_contour)
-            if shape_name:
-                cv2.drawContours(frame, [shape_contour], -1, (255, 0, 0), 2)
+        if current_direction == "forward":
+            symbol_frame(frame, shape_contour)
+ 
+            if len(contours) ==2:
+                shape_name = detect_shape(shape_contour)
+ 
+                if shape_name:
+                    cv2.drawContours(frame, [shape_contour], -1, (255, 0, 0), 2)
+                   # cv2.putText(frame, shape_name, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 
+                   #        1, (0, 255, 0), 2, cv2.LINE_AA)
+                elif shape_name in["Rectangle","Circle"]:
+                    symbol_frame(symbol_roi, shape_contour)
  
     elif len(contours) ==1:
         cv2.putText(frame, "-", (20, 50),
@@ -322,42 +364,21 @@ def process_frame():
     # Show processed images
     cv2.imshow("Mask", mask_to_use)
     cv2.imshow("Frame", frame)
-
-def detect_shape(contour):
-    approx = cv2.approxPolyDP(contour, 0.02 * cv2.arcLength(contour, True), True)
-    num_vertices = len(approx)
  
-    if num_vertices == 3:
-        return "Triangle"
-    elif num_vertices == 4:
-        return "Rectangle"
-    elif num_vertices == 5:
-        return "Pentagon"
-    elif num_vertices == 6:
-        return "Hexagon"
-    else:
-        return None 
-
-
 def symbol_frame(frame,shape_contour):
-    global current_direction  # Access direction control
-    x_start, y_start = 150, 0
-    x_end, y_end = 300, 120
+    x_start, y_start = 100, 0
+    x_end, y_end = 320, 120
     symbol_roi = frame[y_start:y_end, x_start:x_end]
-    cv2.rectangle(frame,(x_start, y_start), (x_end, y_end),(0,255,0),2)
- 
-    if current_direction == "forward":
-        slowForward()
  
     gray_frame = cv2.cvtColor(symbol_roi, cv2.COLOR_BGR2GRAY)
+    gray_frame = cv2.equalizeHist(gray_frame)
     blur_frame = cv2.GaussianBlur(gray_frame, (5,5), 1.1)
     _, otsu_frame = cv2.threshold(blur_frame, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
  
     cv2.imshow('Symbol', otsu_frame)
     best_match = None
     max_matches = 0
-    min_match_count =1 
+    min_match_count =1
  
     for name, ref_img in processed_symbols.items():
         matches = detect_with_orb(ref_img, otsu_frame)  
@@ -366,25 +387,28 @@ def symbol_frame(frame,shape_contour):
             max_matches = matches
             best_match = name
  
+    cv2.rectangle(frame,(x_start, y_start), (x_end, y_end),(0,255,0),2)
+ 
     print(f"Best match: {best_match}, Matches: {max_matches}")
  
     if best_match and max_matches >= min_match_count:
         cv2.putText(frame, f"Symbol: {best_match} ({max_matches})", (20, 50),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         cv2.imshow('Symbol Detection', frame)
+ 
     else:
          # If ORB fails, fallback to contour-based shape detection
         contours, _ = cv2.findContours(otsu_frame, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         if contours:
             largest_contour = max(contours, key=cv2.contourArea)
             detected_shape = detect_shape(largest_contour)
+ 
             if detected_shape:
                 cv2.drawContours(symbol_roi, [largest_contour], -1, (255, 0, 0), 2)
                 cv2.putText(frame, f"Shape: {detected_shape}", (20, 50),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
  
         cv2.imshow('Symbol Detection', frame)
- 
  
 try:
     while True:

@@ -50,7 +50,7 @@ offCountR = 0
 offCountL = 0
 eqDistL = 0
 eqDistR = 0
-wheelCircumference = 2 * math.pi * 3  # Using π for better accuracy
+wheelCircumference = 2 * math.pi * 3  # Using p for better accuracy
 
 # Motor Control Functions
 def forward(speed):
@@ -97,7 +97,7 @@ def stop():
     GPIO.output(in2, GPIO.LOW)
     GPIO.output(in3, GPIO.LOW)
     GPIO.output(in4, GPIO.LOW)
-
+    
 # Rotary Encoder Pulse Counting
 def countPulse(channel):
     global pulseCountR, pulseCountL, eqDistR, eqDistL, offCountR, offCountL
@@ -189,3 +189,4 @@ def main():
         GPIO.cleanup()
 
 main()
+

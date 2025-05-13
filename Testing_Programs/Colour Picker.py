@@ -11,8 +11,8 @@ camera.start()
 
 # HSV range you want to test (adjust as needed)
 # Example: red
-lower_hsv = np.array([0, 100, 100])
-upper_hsv = np.array([10, 255, 255])
+lower_hsv = np.array([50, 10, 10])
+upper_hsv = np.array([180, 255, 255])
 
 def mouse_callback(event, x, y, flags, param):
     if event == cv2.EVENT_MOUSEMOVE:
@@ -28,7 +28,7 @@ print("Hover mouse over a color to see RGB and HSV values")
 
 while True:
     frame = camera.capture_array()
-    hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     # Mask and count pixels within HSV range
     mask = cv2.inRange(hsv, lower_hsv, upper_hsv)
