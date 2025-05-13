@@ -28,4 +28,4 @@ This project develops an autonomous robot car powered by Raspberry Pi 4 that can
  
 **Usage:**
 
-Run the main script to start the robot car operation:
+Run the "Final_PW_Challenge3.py" to start the robot car operation
